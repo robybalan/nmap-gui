@@ -1,0 +1,2 @@
+# Editable installation makes `python -m nmap_gui.main` work with the src layout.
+-e .
