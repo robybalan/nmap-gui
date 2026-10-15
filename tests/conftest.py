@@ -9,6 +9,11 @@ import pytest
 from PyQt6.QtWidgets import QApplication
 
 
+@pytest.fixture(autouse=True)
+def isolate_state(monkeypatch, tmp_path):
+    monkeypatch.setenv("XDG_STATE_HOME", str(tmp_path / "state"))
+
+
 @pytest.fixture(scope="session")
 def qt_app():
     return QApplication.instance() or QApplication([])

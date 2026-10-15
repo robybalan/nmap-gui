@@ -1,14 +1,16 @@
 """Qt presentation layer. Scan execution, validation and argv live elsewhere."""
 
 from dataclasses import replace
+from datetime import datetime, timezone
 import os
 from pathlib import Path
 import shlex
 import shutil
+import sqlite3
 import tempfile
 import time
 
-from PyQt6.QtCore import Qt, QTimer
+from PyQt6.QtCore import Qt, QTimer, QSignalBlocker
 from PyQt6.QtGui import QFontDatabase, QTextCursor
 from PyQt6.QtWidgets import (
     QApplication, QCheckBox, QComboBox, QFormLayout, QGroupBox, QHBoxLayout,
@@ -18,6 +20,7 @@ from PyQt6.QtWidgets import (
 )
 
 from .command_builder import NmapCommandBuilder
+from .database import HistoryDatabase, HistoryError
 from .models import ScanOptions, ScanRun
 from .parser import NmapXmlError, NmapXmlParser
 from .scanner import NmapScanner, find_askpass
@@ -46,7 +49,7 @@ TIMING_CHOICES = ["T0 · Paranoid", "T1 · Sneaky", "T2 · Polite", "T3 · Norma
 
 
 class MainWindow(QMainWindow):
-    def __init__(self):
+    def __init__(self, history_path: str | Path | None = None):
         super().__init__()
         self.setWindowTitle("Nmap Edu GUI")
         self.resize(1220, 850)
@@ -57,12 +60,22 @@ class MainWindow(QMainWindow):
         self._active_options: ScanOptions | None = None
         self._close_requested = False
         self._started = 0.0
+        self._timestamp = ""
+        self._history: HistoryDatabase | None = None
+        history_error = ""
+        try:
+            self._history = HistoryDatabase(history_path)
+        except (OSError, sqlite3.Error, HistoryError) as exc:
+            history_error = f"History unavailable: {exc}"
         self._build_ui()
         self._connect_controls()
         self._timer = QTimer(self)
         self._timer.setInterval(250)
         self._timer.timeout.connect(self._update_elapsed)
         self.update_preview()
+        self.refresh_history()
+        if history_error:
+            self.history_status.setText(history_error)
 
     @staticmethod
     def _combo(choices) -> QComboBox:
@@ -105,6 +118,16 @@ class MainWindow(QMainWindow):
         profile_group = QGroupBox("Scan Profiles")
         form = QFormLayout(profile_group)
         form.setFieldGrowthPolicy(QFormLayout.FieldGrowthPolicy.AllNonFixedFieldsGrow)
+        profile_buttons = QHBoxLayout()
+        host_profile = QPushButton("Host Discovery")
+        port_profile = QPushButton("Port Scan")
+        host_profile.setToolTip("Select Ping Scan (-sn): discover hosts without scanning ports.")
+        port_profile.setToolTip("Select TCP Connect (-sT), then choose a port scanning technique below.")
+        host_profile.clicked.connect(lambda: self.scan_type.setCurrentIndex(self.scan_type.findData("discovery")))
+        port_profile.clicked.connect(lambda: self.scan_type.setCurrentIndex(self.scan_type.findData("connect")))
+        profile_buttons.addWidget(host_profile)
+        profile_buttons.addWidget(port_profile)
+        form.addRow(profile_buttons)
         self.scan_type = self._combo(SCAN_CHOICES)
         form.addRow("Scan", self.scan_type)
         self.discovery = self._combo(DISCOVERY_CHOICES)
@@ -224,6 +247,28 @@ class MainWindow(QMainWindow):
         self.tabs.addTab(result_panel, "Results")
         self.hosts_table = self._table(["IP Address", "Hostname", "Status", "MAC Address", "Vendor"])
         self.tabs.addTab(self.hosts_table, "Discovered Hosts")
+        history_panel = QWidget()
+        history_layout = QVBoxLayout(history_panel)
+        self.history_status = QLabel("Most recent 200 scans. Output and XML are stored locally.")
+        self.history_status.setWordWrap(True)
+        history_layout.addWidget(self.history_status)
+        self.history_table = self._table(["Timestamp (UTC)", "Target", "Duration", "Result", "Exit code", "Command"])
+        history_layout.addWidget(self.history_table)
+        history_buttons = QHBoxLayout()
+        self.open_history_button = QPushButton("Open Results")
+        self.copy_history_button = QPushButton("Copy Command")
+        self.rerun_history_button = QPushButton("Rerun Scan")
+        refresh_button = QPushButton("Refresh")
+        self.open_history_button.clicked.connect(self.open_history)
+        self.copy_history_button.clicked.connect(self.copy_history_command)
+        self.rerun_history_button.clicked.connect(self.rerun_history)
+        refresh_button.clicked.connect(self.refresh_history)
+        self.history_table.itemSelectionChanged.connect(self._update_history_buttons)
+        self.history_table.itemDoubleClicked.connect(self.open_history)
+        for button in (self.open_history_button, self.copy_history_button, self.rerun_history_button, refresh_button):
+            history_buttons.addWidget(button)
+        history_layout.addLayout(history_buttons)
+        self.tabs.addTab(history_panel, "History")
         right_layout.addWidget(self.tabs, 1)
         splitter.addWidget(right)
         splitter.setStretchFactor(0, 0)
@@ -323,7 +368,8 @@ class MainWindow(QMainWindow):
         except ValidationError as exc:
             self.command_preview.clear()
             self.validation_label.setText(str(exc))
-            self.privilege_label.clear()
+            self.privilege_label.setText("Nmap was not found. Install it with: sudo apt install nmap, then restart the app."
+                                         if not shutil.which("nmap") else "")
             self.run_button.setEnabled(False)
             self.copy_command_button.setEnabled(False)
 
@@ -383,6 +429,7 @@ class MainWindow(QMainWindow):
         self._scanner.finished.connect(self._scanner.deleteLater)
         self._set_running(True)
         self._started = time.monotonic()
+        self._timestamp = datetime.now(timezone.utc).isoformat(timespec="seconds")
         self._timer.start()
         self._scanner.start()
 
@@ -393,10 +440,17 @@ class MainWindow(QMainWindow):
         self.run_button.setEnabled(not running)
         self.stop_button.setEnabled(running)
         self.save_button.setEnabled(not running and self._last_run is not None)
+        self._update_history_buttons()
 
     def _receive_result(self, run: ScanRun) -> None:
         self._last_run = run
         self._populate_results(run)
+        if self._history is not None and self._active_options is not None:
+            try:
+                self._history.save_scan(self._timestamp, self._active_options, run)
+                self.refresh_history()
+            except (sqlite3.Error, OSError, HistoryError) as exc:
+                self.history_status.setText(f"Could not save this scan to history: {exc}")
 
     def _populate_results(self, run: ScanRun) -> None:
         self.results_table.setRowCount(0)
@@ -461,6 +515,106 @@ class MainWindow(QMainWindow):
             except OSError as exc:
                 QMessageBox.warning(self, "Unable to save results", str(exc))
 
+    def refresh_history(self, *_args) -> None:
+        if self._history is None:
+            self._update_history_buttons()
+            return
+        try:
+            scans = self._history.list_scans()
+            self.history_table.setSortingEnabled(False)
+            self.history_table.setRowCount(len(scans))
+            for row, scan in enumerate(scans):
+                values = [scan.timestamp, scan.target, f"{scan.duration:.2f} s", scan.result,
+                          str(scan.exit_code) if scan.exit_code is not None else "—", shlex.join(scan.command)]
+                for column, value in enumerate(values):
+                    item = QTableWidgetItem(value)
+                    item.setData(Qt.ItemDataRole.UserRole, scan.id)
+                    item.setToolTip(value)
+                    self.history_table.setItem(row, column, item)
+            # Preserve the database's newest-first order until the user chooses a sort.
+            self.history_status.setText(f"{len(scans)} most recent scans. Output and XML are stored locally.")
+        except (sqlite3.Error, HistoryError) as exc:
+            self.history_status.setText(f"Cannot read history: {exc}")
+        self._update_history_buttons()
+
+    def _update_history_buttons(self) -> None:
+        selected = bool(self.history_table.selectedItems()) and self._history is not None
+        idle = self._scanner is None
+        self.open_history_button.setEnabled(selected and idle)
+        self.rerun_history_button.setEnabled(selected and idle)
+        self.copy_history_button.setEnabled(selected)
+
+    def _selected_history(self):
+        items = self.history_table.selectedItems()
+        if not items or self._history is None:
+            return None
+        try:
+            return self._history.get_scan(items[0].data(Qt.ItemDataRole.UserRole))
+        except (sqlite3.Error, HistoryError) as exc:
+            QMessageBox.warning(self, "Cannot load history", str(exc))
+            return None
+
+    def open_history(self, *_args) -> None:
+        if self._scanner is not None:
+            return
+        entry = self._selected_history()
+        if entry is None:
+            return
+        run = ScanRun(entry.command, entry.output, entry.xml, entry.exit_code,
+                      entry.duration, entry.result == "stopped", entry.error)
+        self._last_run = run
+        self.console.setPlainText(run.output)
+        self._populate_results(run)
+        self.save_button.setEnabled(True)
+        self.tabs.setCurrentIndex(1)
+        self.statusBar().showMessage(f"History #{entry.id} · {entry.timestamp} · {entry.result} · {entry.duration:.2f} s")
+
+    def copy_history_command(self) -> None:
+        entry = self._selected_history()
+        if entry is not None:
+            QApplication.clipboard().setText(shlex.join(entry.command))
+
+    def restore_options(self, options: ScanOptions) -> None:
+        """Restore known typed options; never execute the command string stored in SQLite."""
+        NmapCommandBuilder(options).build(self._xml_path)
+        widgets = [self.target, self.scan_type, self.discovery, self.ports_mode, self.custom_ports,
+                   self.service_detection, self.intensity, self.os_detection, self.default_scripts,
+                   self.aggressive, self.timing, self.verbosity, self.use_sudo, self.ipv6]
+        blockers = [QSignalBlocker(widget) for widget in widgets]
+        try:
+            self.target.setText(options.target)
+            for combo, value in ((self.scan_type, options.scan_type), (self.discovery, options.discovery),
+                                 (self.ports_mode, options.ports_mode)):
+                combo.setCurrentIndex(combo.findData(value))
+            self.custom_ports.setText(options.custom_ports)
+            self.service_detection.setChecked(options.service_detection)
+            self.os_detection.setChecked(options.os_detection)
+            self.default_scripts.setChecked(options.default_scripts)
+            self.aggressive.setChecked(options.aggressive)
+            self.intensity.setValue(options.version_intensity)
+            self.timing.setCurrentIndex(options.timing)
+            self.verbosity.setCurrentIndex(options.verbosity)
+            self.use_sudo.setChecked(options.use_sudo)
+            self.ipv6.setChecked(options.ipv6)
+        finally:
+            for blocker in blockers:
+                blocker.unblock()
+        self.update_preview()
+
+    def rerun_history(self) -> None:
+        if self._scanner is not None:
+            return
+        entry = self._selected_history()
+        if entry is None:
+            return
+        try:
+            self.restore_options(entry.options)
+        except (ValidationError, TypeError) as exc:
+            QMessageBox.warning(self, "Cannot rerun scan", str(exc))
+            return
+        # Let Qt paint the regenerated command before starting the process.
+        QTimer.singleShot(0, self.start_scan)
+
     def closeEvent(self, event) -> None:
         if self._scanner is not None:
             self._close_requested = True
@@ -468,4 +622,7 @@ class MainWindow(QMainWindow):
             event.ignore()
             return
         self._temporary.cleanup()
+        if self._history is not None:
+            self._history.close()
+            self._history = None
         event.accept()

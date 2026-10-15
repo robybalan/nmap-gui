@@ -75,3 +75,15 @@ class HistoryEntry:
     exit_code: int | None
     output: str
     xml: str
+    error: str = ""
+
+
+@dataclass
+class HistorySummary:
+    id: int
+    timestamp: str
+    target: str
+    command: list[str]
+    duration: float
+    result: str
+    exit_code: int | None

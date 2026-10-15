@@ -1,6 +1,8 @@
 import os
 import sys
 
+from PyQt6.QtWidgets import QApplication
+
 from nmap_gui.gui import MainWindow
 from nmap_gui.models import ScanRun
 
@@ -82,5 +84,68 @@ def test_privilege_warning(qt_app, monkeypatch):
         assert not window.run_button.isEnabled()
         window.use_sudo.setChecked(True)
         assert window.command_preview.toPlainText().startswith("sudo -A -- nmap")
+    finally:
+        window.close()
+
+
+def test_history_reopen_copy_and_rerun(qt_app, wait_until, tmp_path, monkeypatch):
+    executable = tmp_path / "nmap"
+    xml = '<nmaprun><host><status state="up"/><address addr="127.0.0.1" addrtype="ipv4"/></host></nmaprun>'
+    executable.write_text(f"#!{sys.executable}\nimport sys,pathlib\n"
+        f"pathlib.Path(sys.argv[sys.argv.index('-oX')+1]).write_text({xml!r})\n"
+        "print('synthetic completed scan', flush=True)\n")
+    executable.chmod(0o700)
+    monkeypatch.setenv("PATH", str(tmp_path) + os.pathsep + os.environ["PATH"])
+    database = tmp_path / "history.db"
+    first = MainWindow(database)
+    try:
+        first.target.setText("127.0.0.1")
+        first.timing.setCurrentIndex(4)
+        first.start_scan()
+        wait_until(lambda: first._scanner is None)
+        assert first.history_table.rowCount() == 1
+        previous_command = list(first._last_run.command)
+    finally:
+        first.close()
+    second = MainWindow(database)
+    try:
+        second.history_table.selectRow(0)
+        second.open_history()
+        assert second.console.toPlainText() == "synthetic completed scan\n"
+        assert second.hosts_table.item(0, 0).text() == "127.0.0.1"
+        second.copy_history_command()
+        assert "-T4" in QApplication.clipboard().text()
+        assert previous_command[-2] in QApplication.clipboard().text()
+        second.rerun_history()
+        wait_until(lambda: second.history_table.rowCount() == 2 and second._scanner is None)
+        assert second._last_run.exit_code == 0
+        assert second._last_run.command != previous_command  # fresh private XML path
+        assert second.selected_options().timing == 4
+    finally:
+        if second._scanner is not None:
+            second.stop_scan()
+            wait_until(lambda: second._scanner is None)
+        second.close()
+
+
+def test_history_failure_does_not_block_gui(qt_app, tmp_path):
+    window = MainWindow(history_path=tmp_path)  # directory, not a database file
+    try:
+        assert "History unavailable" in window.history_status.text()
+        window.target.setText("127.0.0.1")
+        assert "nmap -sT" in window.command_preview.toPlainText()
+    finally:
+        window.close()
+
+
+def test_missing_nmap_message(qt_app, monkeypatch):
+    import nmap_gui.gui as gui
+    original = gui.shutil.which
+    monkeypatch.setattr(gui.shutil, "which", lambda name: None if name == "nmap" else original(name))
+    window = MainWindow()
+    try:
+        assert "Nmap was not found" in window.privilege_label.text()
+        window.target.setText("127.0.0.1")
+        assert not window.run_button.isEnabled()
     finally:
         window.close()
