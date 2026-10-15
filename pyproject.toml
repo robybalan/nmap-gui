@@ -22,6 +22,7 @@ dev = ["pytest>=8,<10", "build>=1,<2"]
 
 [project.scripts]
 nmap-gui = "nmap_gui.main:main"
+nmap-gui-askpass = "nmap_gui.askpass:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]

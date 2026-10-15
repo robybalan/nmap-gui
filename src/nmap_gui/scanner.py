@@ -4,14 +4,23 @@ import codecs
 import os
 from pathlib import Path
 import selectors
+import shutil
 import signal
 import subprocess
+import sys
 import threading
 import time
 
 from PyQt6.QtCore import QThread, pyqtSignal as Signal
 
 from .models import ScanRun
+
+
+def find_askpass() -> str | None:
+    local = Path(sys.executable).absolute().parent / "nmap-gui-askpass"
+    if local.is_file() and os.access(local, os.X_OK):
+        return str(local)
+    return shutil.which("nmap-gui-askpass")
 
 
 class NmapScanner(QThread):
@@ -47,10 +56,17 @@ class NmapScanner(QThread):
             if self._stop_requested.is_set():
                 return
             # A separate session permits stopping the process tree, including sudo's monitor.
-            # stdin is closed: sudo -n fails clearly rather than waiting for a password.
+            # sudo's separate askpass helper handles authentication, never the main GUI.
+            environment = os.environ.copy()
+            if self.command[:3] == ["sudo", "-A", "--"]:
+                helper = find_askpass()
+                if not helper:
+                    raise ValueError("sudo helper missing. Install the project with pip install -e .")
+                environment["SUDO_ASKPASS"] = helper
             process = subprocess.Popen(
                 self.command, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE, shell=False, start_new_session=True, bufsize=0,
+                env=environment,
             )
             with selectors.DefaultSelector() as selector:
                 decoders = {}

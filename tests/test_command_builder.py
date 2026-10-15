@@ -45,7 +45,7 @@ def test_aggressive_deduplicates_features():
 def test_sudo_and_xml_preview():
     builder = NmapCommandBuilder(ScanOptions(target="127.0.0.1", use_sudo=True))
     command = builder.build("/tmp/a b.xml")
-    assert command[:4] == ["sudo", "-n", "--", "nmap"]
+    assert command[:4] == ["sudo", "-A", "--", "nmap"]
     assert command[-3:] == ["-oX", "/tmp/a b.xml", "127.0.0.1"]
     assert "'/tmp/a b.xml'" in builder.preview("/tmp/a b.xml")
 

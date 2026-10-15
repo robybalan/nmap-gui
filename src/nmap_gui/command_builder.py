@@ -54,7 +54,7 @@ class NmapCommandBuilder:
         if o.scan_type == "discovery" and (o.discovery == "skip" or o.ports_mode != "default"
                 or o.service_detection or o.os_detection or o.default_scripts or o.aggressive):
             raise ValidationError("Ping Scan cannot be combined with port scanning, detection, scripts or -Pn.")
-        argv = ["sudo", "-n", "--", "nmap"] if o.use_sudo else ["nmap"]
+        argv = ["sudo", "-A", "--", "nmap"] if o.use_sudo else ["nmap"]
         if o.ipv6 or target_is_ipv6(target):
             argv.append("-6")
         argv.append(SCAN_FLAGS[o.scan_type])
