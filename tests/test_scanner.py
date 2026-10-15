@@ -1,5 +1,6 @@
 import shutil
 import socket
+import signal
 import sys
 
 import pytest
@@ -79,6 +80,7 @@ def test_real_nmap_loopback(tmp_path, qt_app, wait_until):
         xml_path = tmp_path / "scan.xml"
         command = NmapCommandBuilder(ScanOptions(target="127.0.0.1", discovery="skip",
             ports_mode="custom", custom_ports=str(port))).build(str(xml_path))
+        command.insert(-1, "-n")  # no reverse DNS requests during this loopback-only test
         scanner = NmapScanner(command, str(xml_path))
         runs = []
         scanner.completed.connect(runs.append)
@@ -107,3 +109,22 @@ def test_real_nmap_xml_without_network(tmp_path, qt_app, wait_until):
     assert runs[0].exit_code == 0, runs[0].output
     assert "127.0.0.1" in runs[0].xml
     assert "Nmap done" in runs[0].output
+
+
+def test_stop_escalates_when_process_ignores_signals(tmp_path, qt_app, wait_until):
+    scanner = NmapScanner([sys.executable, "-u", "-c",
+        "import signal,time; signal.signal(signal.SIGINT,signal.SIG_IGN); "
+        "signal.signal(signal.SIGTERM,signal.SIG_IGN); print('ready',flush=True); time.sleep(30)"],
+        str(tmp_path / "scan.xml"))
+    output, runs = [], []
+    scanner.stdout.connect(output.append)
+    scanner.completed.connect(runs.append)
+    scanner.start()
+    try:
+        wait_until(lambda: output)
+    finally:
+        scanner.stop()
+        assert scanner.wait(7000)
+    qt_app.processEvents()
+    assert runs[0].stopped
+    assert runs[0].exit_code == -signal.SIGKILL

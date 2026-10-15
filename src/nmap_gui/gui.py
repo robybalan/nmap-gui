@@ -60,6 +60,7 @@ class MainWindow(QMainWindow):
         self._active_options: ScanOptions | None = None
         self._close_requested = False
         self._started = 0.0
+        self._stopping = False
         self._timestamp = ""
         self._history: HistoryDatabase | None = None
         history_error = ""
@@ -146,7 +147,7 @@ class MainWindow(QMainWindow):
         form.addRow("Custom ports", self.custom_ports)
         option_layout.addWidget(ports_group)
 
-        detection_group = QGroupBox("Detection & Scripts")
+        detection_group = QGroupBox("Detection and Scripts")
         form = QFormLayout(detection_group)
         self.service_detection = QCheckBox("Service Version Detection · -sV")
         self.service_detection.setToolTip("Probes services to identify products and versions.")
@@ -168,7 +169,7 @@ class MainWindow(QMainWindow):
         self.detection_group = detection_group
         option_layout.addWidget(detection_group)
 
-        tuning_group = QGroupBox("Timing & Output")
+        tuning_group = QGroupBox("Timing and Output")
         form = QFormLayout(tuning_group)
         self.timing = QComboBox()
         self.timing.addItems(TIMING_CHOICES)
@@ -429,6 +430,7 @@ class MainWindow(QMainWindow):
         self._scanner.finished.connect(self._scanner.deleteLater)
         self._set_running(True)
         self._started = time.monotonic()
+        self._stopping = False
         self._timestamp = datetime.now(timezone.utc).isoformat(timespec="seconds")
         self._timer.start()
         self._scanner.start()
@@ -497,10 +499,12 @@ class MainWindow(QMainWindow):
             QTimer.singleShot(0, self.close)
 
     def _update_elapsed(self) -> None:
-        self.statusBar().showMessage(f"Scanning · {time.monotonic() - self._started:.1f} s")
+        state = "Stopping scan" if self._stopping else "Scanning"
+        self.statusBar().showMessage(f"{state} · {time.monotonic() - self._started:.1f} s")
 
     def stop_scan(self) -> None:
         if self._scanner is not None:
+            self._stopping = True
             self._scanner.stop()
             self.stop_button.setEnabled(False)
             self.statusBar().showMessage("Stopping scan…")

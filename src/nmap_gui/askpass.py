@@ -10,7 +10,7 @@ from PyQt6.QtWidgets import QApplication, QInputDialog, QLineEdit
 
 
 def main() -> int:
-    app = QApplication(sys.argv[:1])
+    app = QApplication.instance() or QApplication(sys.argv[:1])
     app.setApplicationName("Nmap Edu GUI — sudo authentication")
     password, accepted = QInputDialog.getText(
         None, "Authorize Nmap with sudo",

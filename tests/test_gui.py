@@ -149,3 +149,24 @@ def test_missing_nmap_message(qt_app, monkeypatch):
         assert not window.run_button.isEnabled()
     finally:
         window.close()
+
+
+def test_close_window_cancels_scan(qt_app, wait_until, tmp_path, monkeypatch):
+    executable = tmp_path / "nmap"
+    executable.write_text(f"#!{sys.executable}\nimport time\nprint('ready',flush=True)\ntime.sleep(30)\n")
+    executable.chmod(0o700)
+    monkeypatch.setenv("PATH", str(tmp_path) + os.pathsep + os.environ["PATH"])
+    window = MainWindow()
+    window.show()
+    window.target.setText("127.0.0.1")
+    window.start_scan()
+    try:
+        wait_until(lambda: "ready" in window.console.toPlainText())
+        window.close()
+        wait_until(lambda: window._scanner is None and not window.isVisible())
+        assert window._last_run.stopped
+    finally:
+        if window._scanner is not None:
+            window.stop_scan()
+            wait_until(lambda: window._scanner is None)
+        window.close()
