@@ -28,6 +28,7 @@ Screenshots show the actual Qt interface populated with **illustrative sample la
 - **Discovered Hosts**: IP Address, Hostname, Status, MAC Address, Vendor.
 - SQLite **History**: start timestamp in UTC, target, exact argv, options, duration, outcome, exit code, raw output and XML. Reopen, copy commands or rerun scans.
 - Explicit sudo selection for privileged scans; only Nmap is elevated. No saved passwords.
+- Consistent light colors with readable disabled controls, selections and dialogs, including on desktops using a dark system theme.
 
 ## Requirements
 
@@ -168,6 +169,7 @@ nmap-gui/
 │   ├── __init__.py
 │   ├── main.py               # Entry point and CLI arguments
 │   ├── gui.py                # Qt widgets and presentation
+│   ├── theme.py              # Consistent light palette and readable widget states
 │   ├── command_builder.py    # Validated argv and command preview
 │   ├── scanner.py            # QThread + subprocess, streaming and cancellation
 │   ├── parser.py             # ElementTree XML → host/port/service objects

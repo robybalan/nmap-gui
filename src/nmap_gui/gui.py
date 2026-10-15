@@ -24,6 +24,7 @@ from .database import HistoryDatabase, HistoryError
 from .models import ScanOptions, ScanRun
 from .parser import NmapXmlError, NmapXmlParser
 from .scanner import NmapScanner, find_askpass
+from .theme import apply_light_theme
 from .validators import ValidationError
 
 SCAN_CHOICES = [
@@ -51,6 +52,7 @@ TIMING_CHOICES = ["T0 · Paranoid", "T1 · Sneaky", "T2 · Polite", "T3 · Norma
 class MainWindow(QMainWindow):
     def __init__(self, history_path: str | Path | None = None):
         super().__init__()
+        apply_light_theme(QApplication.instance())
         self.setWindowTitle("Nmap Edu GUI")
         self.resize(1220, 850)
         self._temporary = tempfile.TemporaryDirectory(prefix="nmap-gui-")
@@ -196,6 +198,7 @@ class MainWindow(QMainWindow):
         command_group = QGroupBox("Generated Command")
         command_layout = QVBoxLayout(command_group)
         monospace = QFontDatabase.systemFont(QFontDatabase.SystemFont.FixedFont)
+        monospace.setPointSize(max(10, monospace.pointSize()))
         self.command_preview = QPlainTextEdit()
         self.command_preview.setReadOnly(True)
         self.command_preview.setFont(monospace)
@@ -275,17 +278,6 @@ class MainWindow(QMainWindow):
         splitter.setStretchFactor(0, 0)
         splitter.setStretchFactor(1, 1)
         splitter.setSizes([390, 790])
-        self.setStyleSheet("""
-            QMainWindow { background: #f3f6f8; }
-            QLabel#title { color: #145e65; font-size: 25px; font-weight: 700; }
-            QGroupBox { font-weight: 600; border: 1px solid #c6d3db; border-radius: 7px;
-                        margin-top: 12px; padding: 12px 8px 8px; }
-            QGroupBox::title { subcontrol-origin: margin; left: 10px; padding: 0 4px; }
-            QPushButton { padding: 7px 10px; }
-            QPushButton#run { background: #16737c; color: white; border-radius: 5px; }
-            QPushButton#run:disabled { background: #9aabb2; }
-            QPlainTextEdit#console { background: #18222d; color: #dce7ee; border: 0; padding: 8px; }
-        """)
         self.statusBar().showMessage("Ready — enter an authorized target.")
 
     @staticmethod

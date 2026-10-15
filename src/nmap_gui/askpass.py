@@ -8,9 +8,12 @@ import sys
 
 from PyQt6.QtWidgets import QApplication, QInputDialog, QLineEdit
 
+from .theme import apply_light_theme
+
 
 def main() -> int:
     app = QApplication.instance() or QApplication(sys.argv[:1])
+    apply_light_theme(app)
     app.setApplicationName("Nmap Edu GUI — sudo authentication")
     password, accepted = QInputDialog.getText(
         None, "Authorize Nmap with sudo",

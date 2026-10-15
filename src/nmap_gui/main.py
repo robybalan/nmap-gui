@@ -17,7 +17,6 @@ def main() -> int:
     app = QApplication(sys.argv[:1])
     app.setApplicationName("Nmap Edu GUI")
     app.setOrganizationName("NmapEduGUI")
-    app.setStyle("Fusion")
     window = MainWindow(history_path=args.history_db)
     window.show()
     return app.exec()
