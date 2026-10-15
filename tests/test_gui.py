@@ -2,6 +2,25 @@ import os
 import sys
 
 from nmap_gui.gui import MainWindow
+from nmap_gui.models import ScanRun
+
+
+def test_structured_results(qt_app):
+    window = MainWindow()
+    try:
+        xml = '''<nmaprun><host><status state="up"/><address addr="127.0.0.1" addrtype="ipv4"/>
+        <hostnames><hostname name="localhost"/></hostnames><ports><port protocol="tcp" portid="22">
+        <state state="open"/><service name="ssh" product="OpenSSH" version="9.2"/></port></ports></host></nmaprun>'''
+        window._populate_results(ScanRun(["nmap"], "", xml, 0, 1.0))
+        assert window.results_table.rowCount() == 1
+        assert window.results_table.item(0, 5).text() == "ssh"
+        assert window.results_table.item(0, 6).text() == "OpenSSH 9.2"
+        assert window.hosts_table.item(0, 1).text() == "localhost"
+        window._populate_results(ScanRun(["nmap"], "", "<broken", 1, 1.0))
+        assert window.results_table.rowCount() == 0
+        assert "Invalid or incomplete" in window.results_summary.text()
+    finally:
+        window.close()
 
 
 def test_gui_streaming_and_stop(qt_app, wait_until, monkeypatch, tmp_path):

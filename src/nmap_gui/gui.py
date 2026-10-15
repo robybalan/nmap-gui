@@ -14,11 +14,12 @@ from PyQt6.QtWidgets import (
     QApplication, QCheckBox, QComboBox, QFormLayout, QGroupBox, QHBoxLayout,
     QLabel, QLineEdit, QMainWindow, QMessageBox, QPlainTextEdit, QPushButton,
     QScrollArea, QSpinBox, QSplitter, QTabWidget, QVBoxLayout, QWidget,
-    QFileDialog,
+    QFileDialog, QTableWidget, QTableWidgetItem, QHeaderView, QAbstractItemView,
 )
 
 from .command_builder import NmapCommandBuilder
 from .models import ScanOptions, ScanRun
+from .parser import NmapXmlError, NmapXmlParser
 from .scanner import NmapScanner, find_askpass
 from .validators import ValidationError
 
@@ -213,6 +214,16 @@ class MainWindow(QMainWindow):
         copy_output.clicked.connect(lambda: QApplication.clipboard().setText(self.console.toPlainText()))
         output_layout.addWidget(copy_output, alignment=Qt.AlignmentFlag.AlignRight)
         self.tabs.addTab(output_panel, "Output")
+        result_panel = QWidget()
+        result_layout = QVBoxLayout(result_panel)
+        self.results_summary = QLabel("Run a scan to see structured results.")
+        self.results_summary.setWordWrap(True)
+        result_layout.addWidget(self.results_summary)
+        self.results_table = self._table(["Host", "Status", "Port", "Protocol", "State", "Service", "Version"])
+        result_layout.addWidget(self.results_table)
+        self.tabs.addTab(result_panel, "Results")
+        self.hosts_table = self._table(["IP Address", "Hostname", "Status", "MAC Address", "Vendor"])
+        self.tabs.addTab(self.hosts_table, "Discovered Hosts")
         right_layout.addWidget(self.tabs, 1)
         splitter.addWidget(right)
         splitter.setStretchFactor(0, 0)
@@ -230,6 +241,30 @@ class MainWindow(QMainWindow):
             QPlainTextEdit#console { background: #18222d; color: #dce7ee; border: 0; padding: 8px; }
         """)
         self.statusBar().showMessage("Ready — enter an authorized target.")
+
+    @staticmethod
+    def _table(headers: list[str]) -> QTableWidget:
+        table = QTableWidget(0, len(headers))
+        table.setHorizontalHeaderLabels(headers)
+        table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
+        table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
+        table.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
+        table.setAlternatingRowColors(True)
+        table.verticalHeader().setVisible(False)
+        table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.ResizeToContents)
+        table.horizontalHeader().setStretchLastSection(True)
+        return table
+
+    @staticmethod
+    def _fill_table(table: QTableWidget, rows: list[list[str]]) -> None:
+        table.setSortingEnabled(False)
+        table.setRowCount(len(rows))
+        for row, values in enumerate(rows):
+            for column, value in enumerate(values):
+                item = QTableWidgetItem(str(value))
+                item.setToolTip(str(value))
+                table.setItem(row, column, item)
+        table.setSortingEnabled(True)
 
     def _connect_controls(self) -> None:
         self.target.textChanged.connect(self.update_preview)
@@ -336,6 +371,9 @@ class MainWindow(QMainWindow):
         self.command_preview.setPlainText(shlex.join(command))
         self._last_run = None
         self.console.clear()
+        self.results_table.setRowCount(0)
+        self.hosts_table.setRowCount(0)
+        self.results_summary.setText("Scan in progress. Structured results appear after completion or cancellation.")
         self.tabs.setCurrentIndex(0)
         self._scanner = NmapScanner(command, self._xml_path, self)
         self._scanner.stdout.connect(self.append_output)
@@ -358,6 +396,39 @@ class MainWindow(QMainWindow):
 
     def _receive_result(self, run: ScanRun) -> None:
         self._last_run = run
+        self._populate_results(run)
+
+    def _populate_results(self, run: ScanRun) -> None:
+        self.results_table.setRowCount(0)
+        self.hosts_table.setRowCount(0)
+        if not run.xml.strip():
+            self.results_summary.setText("No XML results available. See Output for diagnostics.")
+            return
+        partial_note = ""
+        try:
+            hosts = NmapXmlParser().parse(run.xml)
+        except NmapXmlError as exc:
+            if not run.stopped:
+                self.results_summary.setText(str(exc))
+                return
+            try:
+                hosts = NmapXmlParser().parse(run.xml, allow_partial=True)
+                partial_note = " Incomplete XML: only completed host elements are shown."
+            except NmapXmlError as partial_exc:
+                self.results_summary.setText(str(partial_exc))
+                return
+        rows, discovered = [], []
+        for host in hosts:
+            if host.status == "up":
+                discovered.append([host.address, host.hostname, host.status, host.mac_address, host.vendor])
+            if not host.ports:
+                rows.append([host.address, host.status, "", "", "", "", ""])
+            for port in host.ports:
+                service = "/".join(value for value in (port.service.tunnel, port.service.name) if value)
+                rows.append([host.address, host.status, str(port.port), port.protocol, port.state, service, port.service.description])
+        self._fill_table(self.results_table, rows)
+        self._fill_table(self.hosts_table, discovered)
+        self.results_summary.setText(f"{len(hosts)} hosts · {len(discovered)} up · {sum(len(h.ports) for h in hosts)} explicit port records.{partial_note}")
 
     def _scan_finished(self) -> None:
         self._timer.stop()
