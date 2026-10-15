@@ -55,10 +55,9 @@ The GUI also reports a clear error when Nmap is missing. Qt needs the Linux plat
 
 ## Installation
 
-Replace `YOUR_USERNAME` with the owner of your published repository:
 
 ```bash
-git clone https://github.com/YOUR_USERNAME/nmap-gui.git
+git clone https://github.com/roby.balan/nmap-gui.git
 cd nmap-gui
 python3 -m venv .venv
 source .venv/bin/activate
@@ -250,7 +249,7 @@ See [CONTRIBUTING.md](CONTRIBUTING.md). Keep command building, validation, execu
 To publish your prepared local repository, create an empty public `nmap-gui` repository in your GitHub account, then configure its URL:
 
 ```bash
-git remote add origin https://github.com/YOUR_USERNAME/nmap-gui.git
+git remote add origin https://github.com/roby.balan/nmap-gui.git
 git push -u origin main
 ```
 
